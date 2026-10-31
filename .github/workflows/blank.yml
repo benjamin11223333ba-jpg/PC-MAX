@@ -22,14 +22,14 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
+          if ([string]::IsNullOrWhiteSpace($env:TS_AUTHKEY)) {
+            throw "TAILSCALE_AUTH_KEY nao configurada."
+          }
+
           Write-Host "=================================="
           Write-Host "       BENJA CLOUD PC"
           Write-Host "       ULTRA PERFORMANCE"
           Write-Host "=================================="
-
-          if ([string]::IsNullOrWhiteSpace($env:TS_AUTHKEY)) {
-            throw "TAILSCALE_AUTH_KEY nao configurada."
-          }
 
           $os = Get-CimInstance Win32_OperatingSystem
           $cpu = Get-CimInstance Win32_Processor
@@ -71,12 +71,12 @@ jobs:
             -Action Allow `
             -Profile Any
 
-          Set-Service -Name TermService -StartupType Automatic
-          Start-Service -Name TermService
+          Set-Service TermService -StartupType Automatic
+          Start-Service TermService
 
           Write-Host "Remote Desktop configured."
 
-      - name: Create Benja Account
+      - name: Create Benja Administrator
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -103,6 +103,15 @@ jobs:
               -AccountNeverExpires
           }
 
+          # Administradores locais
+          $adminGroup = Get-LocalGroup -SID "S-1-5-32-544"
+
+          Add-LocalGroupMember `
+            -Group $adminGroup.Name `
+            -Member $username `
+            -ErrorAction SilentlyContinue
+
+          # Usuarios de Area de Trabalho Remota
           $rdpGroup = Get-LocalGroup -SID "S-1-5-32-555"
 
           Add-LocalGroupMember `
@@ -110,27 +119,31 @@ jobs:
             -Member $username `
             -ErrorAction SilentlyContinue
 
-          Write-Host "User Benja configured successfully."
+          $membership = Get-LocalGroupMember `
+            -Group $adminGroup.Name
+
+          if ($membership.Name -notcontains "$env:COMPUTERNAME\$username") {
+            throw "Benja nao foi adicionado aos administradores."
+          }
+
+          Write-Host "USER: Benja"
+          Write-Host "ADMINISTRATOR: VERIFIED"
 
       - name: Optimize Windows
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
 
-          Write-Host "Applying performance settings..."
+          Write-Host "Applying available performance settings..."
 
-          # Solicitar plano de alto desempenho
           powercfg /setactive SCHEME_MIN
 
-          # Informacoes do processador
           $cpu = Get-CimInstance Win32_Processor
+          $os = Get-CimInstance Win32_OperatingSystem
 
           Write-Host "CPU: $($cpu.Name)"
           Write-Host "CORES: $($cpu.NumberOfCores)"
           Write-Host "THREADS: $($cpu.NumberOfLogicalProcessors)"
-
-          # Informacoes da memoria
-          $os = Get-CimInstance Win32_OperatingSystem
 
           $usedRAM = [math]::Round(
             ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 2
@@ -142,13 +155,10 @@ jobs:
 
           Write-Host "RAM: $usedRAM / $totalRAM GB"
 
-          # Informacoes dos discos
           Get-CimInstance Win32_LogicalDisk |
             Select-Object DeviceID,
               @{N="TotalGB";E={[math]::Round($_.Size / 1GB, 2)}},
               @{N="FreeGB";E={[math]::Round($_.FreeSpace / 1GB, 2)}}
-
-          Write-Host "Performance checks completed."
 
       - name: Install Tailscale
         shell: pwsh
@@ -171,13 +181,11 @@ jobs:
             throw "Tailscale installation failed."
           }
 
-          $ts = "C:\Program Files\Tailscale\tailscale.exe"
-
-          if (!(Test-Path $ts)) {
+          if (!(Test-Path "C:\Program Files\Tailscale\tailscale.exe")) {
             throw "Tailscale executable not found."
           }
 
-          Write-Host "Tailscale installed successfully."
+          Write-Host "Tailscale installed."
 
       - name: Connect Tailscale
         shell: pwsh
@@ -206,7 +214,7 @@ jobs:
           "TAILSCALE_IP=$tsIP" |
             Out-File $env:GITHUB_ENV -Append -Encoding utf8
 
-          Write-Host "Tailscale IP obtained successfully."
+          Write-Host "Tailscale IP obtained."
 
       - name: Verify Remote Desktop
         shell: pwsh
@@ -230,7 +238,7 @@ jobs:
           }
 
           if (!$ready) {
-            throw "RDP listener not detected on port 3389."
+            throw "RDP listener not detected."
           }
 
           Write-Host "RDP listener verified."
@@ -248,13 +256,14 @@ jobs:
 
           Write-Host ""
           Write-Host "======================================"
-          Write-Host "        BENJA CLOUD PC ONLINE"
+          Write-Host "         BENJA CLOUD PC"
           Write-Host "======================================"
           Write-Host "STATUS: RUNNING"
           Write-Host "IP: $env:TAILSCALE_IP"
           Write-Host "PORT: 3389"
-          Write-Host "NAME: $username"
+          Write-Host "USER: $username"
           Write-Host "PASSWORD: $password"
+          Write-Host "ADMINISTRATOR: YES"
           Write-Host "======================================"
 
           while (((Get-Date) - $start).TotalMinutes -lt $duration) {
@@ -281,10 +290,9 @@ jobs:
             Write-Host "========== LIVE MONITOR =========="
             Write-Host "STATUS: RUNNING"
             Write-Host "IP: $env:TAILSCALE_IP"
-            Write-Host "PORT: 3389"
-            Write-Host "NAME: $username"
-            Write-Host "PASSWORD: $password"
-            Write-Host "CPU LOAD: $($cpu.LoadPercentage)%"
+            Write-Host "USER: $username"
+            Write-Host "ADMINISTRATOR: YES"
+            Write-Host "CPU: $($cpu.LoadPercentage)%"
             Write-Host "RAM: $usedRAM / $totalRAM GB"
             Write-Host "DISK FREE: $([math]::Round($disk.FreeSpace / 1GB, 2)) GB"
             Write-Host "UPTIME: $elapsed minutes"
