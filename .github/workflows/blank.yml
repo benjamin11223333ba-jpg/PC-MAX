@@ -1,5 +1,5 @@
 
-name: Benja Cloud PC - Maximum Performance
+name: Benja Cloud PC - ULTRA PERFORMANCE
 
 on:
   workflow_dispatch:
@@ -8,10 +8,14 @@ permissions:
   contents: read
 
 jobs:
-  windows-pc:
-    name: Windows Performance Environment
+  secure-rdp:
+    name: Benja Windows Cloud
     runs-on: windows-2025
     timeout-minutes: 350
+
+    env:
+      TS_AUTHKEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+      RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
     steps:
       - name: Initialize Windows
@@ -19,104 +23,207 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host "===================================="
-          Write-Host "       BENJA CLOUD PC"
-          Write-Host "       MAXIMUM PERFORMANCE"
-          Write-Host "===================================="
+          if (!$env:TS_AUTHKEY) {
+            throw "Missing TAILSCALE_AUTH_KEY secret."
+          }
 
-          Write-Host ""
-          Write-Host "Windows environment initialized."
+          if (!$env:RDP_PASSWORD) {
+            throw "Missing RDP_PASSWORD secret."
+          }
 
-      - name: System Information
+          Write-Host "BENJA CLOUD PC - STARTING"
+
+          Get-CimInstance Win32_OperatingSystem |
+            Select-Object Caption, Version
+
+          Get-CimInstance Win32_Processor |
+            Select-Object Name, NumberOfLogicalProcessors
+
+          Get-CimInstance Win32_ComputerSystem |
+            Select-Object @{N="RAM_GB";E={[math]::Round($_.TotalPhysicalMemory / 1GB, 2)}}
+
+      - name: Configure Remote Desktop
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          $os = Get-CimInstance Win32_OperatingSystem
-          $cpu = Get-CimInstance Win32_Processor
-          $computer = Get-CimInstance Win32_ComputerSystem
-          $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name fDenyTSConnections -Value 0
 
-          Write-Host "WINDOWS: $($os.Caption)"
-          Write-Host "VERSION: $($os.Version)"
-          Write-Host "CPU: $($cpu.Name)"
-          Write-Host "CORES: $($cpu.NumberOfCores)"
-          Write-Host "THREADS: $($cpu.NumberOfLogicalProcessors)"
-          Write-Host "RAM TOTAL: $([math]::Round($computer.TotalPhysicalMemory / 1GB, 2)) GB"
-          Write-Host "DISK TOTAL: $([math]::Round($disk.Size / 1GB, 2)) GB"
-          Write-Host "DISK FREE: $([math]::Round($disk.FreeSpace / 1GB, 2)) GB"
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name UserAuthentication -Value 1
 
-      - name: Optimize Windows Environment
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name SecurityLayer -Value 1
+
+          Get-NetFirewallRule -DisplayName "Benja RDP Tailscale" `
+            -ErrorAction SilentlyContinue |
+            Remove-NetFirewallRule
+
+          New-NetFirewallRule `
+            -DisplayName "Benja RDP Tailscale" `
+            -Direction Inbound `
+            -Protocol TCP `
+            -LocalPort 3389 `
+            -RemoteAddress "100.64.0.0/10" `
+            -Action Allow `
+            -Profile Any
+
+          Set-Service TermService -StartupType Automatic
+          Start-Service TermService
+
+          Write-Host "RDP configured."
+
+      - name: Create Benja User
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $secure = ConvertTo-SecureString `
+            $env:RDP_PASSWORD -AsPlainText -Force
+
+          $existing = Get-LocalUser -Name "Benja" `
+            -ErrorAction SilentlyContinue
+
+          if ($existing) {
+            Set-LocalUser -Name "Benja" -Password $secure
+            Enable-LocalUser -Name "Benja"
+          }
+          else {
+            New-LocalUser `
+              -Name "Benja" `
+              -Password $secure `
+              -AccountNeverExpires
+          }
+
+          Add-LocalGroupMember `
+            -Group "Remote Desktop Users" `
+            -Member "Benja" `
+            -ErrorAction SilentlyContinue
+
+          Write-Host "User Benja configured."
+
+      - name: Optimize Windows
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
 
-          Write-Host "Applying safe process optimizations..."
+          Write-Host "Applying performance settings..."
 
-          # Reduzir prioridade de processos em segundo plano
-          Get-Process |
-            Where-Object {
-              $_.ProcessName -in @(
-                "OneDrive",
-                "Teams",
-                "PhoneExperienceHost"
-              )
-            } |
-            ForEach-Object {
-              try {
-                $_.PriorityClass = "BelowNormal"
-                Write-Host "Adjusted: $($_.ProcessName)"
-              }
-              catch {
-                Write-Host "Skipped: $($_.ProcessName)"
-              }
-            }
+          powercfg /setactive SCHEME_MIN
 
-          # Informações de energia
-          powercfg /getactivescheme
+          Write-Host "High performance power plan requested."
 
-          Write-Host "Optimization step completed."
+          Get-CimInstance Win32_Processor |
+            Select-Object Name, LoadPercentage
 
-      - name: Performance Monitoring
+          Write-Host "Optimization checks completed."
+
+      - name: Install Tailscale
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          $cpu = Get-CimInstance Win32_Processor
-          $os = Get-CimInstance Win32_OperatingSystem
+          $installer = "$env:TEMP\tailscale.msi"
 
-          $usedRAM = [math]::Round(
-            ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB,
-            2
-          )
+          Invoke-WebRequest `
+            -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" `
+            -OutFile $installer
 
-          $totalRAM = [math]::Round(
-            $os.TotalVisibleMemorySize / 1MB,
-            2
-          )
+          $process = Start-Process msiexec.exe `
+            -ArgumentList @("/i", $installer, "/qn", "/norestart") `
+            -Wait -PassThru
 
-          Write-Host "========== PERFORMANCE =========="
-          Write-Host "CPU: $($cpu.LoadPercentage)%"
-          Write-Host "RAM USED: $usedRAM GB"
-          Write-Host "RAM TOTAL: $totalRAM GB"
-          Write-Host "================================="
+          Remove-Item $installer -Force
 
-      - name: Final System Verification
+          if ($process.ExitCode -ne 0) {
+            throw "Tailscale installation failed."
+          }
+
+          if (!(Test-Path "C:\Program Files\Tailscale\tailscale.exe")) {
+            throw "Tailscale executable not found."
+          }
+
+          Write-Host "Tailscale installed."
+
+      - name: Connect Tailscale
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          if (-not (Get-Command powershell.exe -ErrorAction SilentlyContinue)) {
-            throw "PowerShell verification failed."
+          $ts = "C:\Program Files\Tailscale\tailscale.exe"
+
+          & $ts up `
+            "--auth-key=$env:TS_AUTHKEY" `
+            "--hostname=benja-cloud-$env:GITHUB_RUN_ID" `
+            "--accept-dns=false"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Tailscale connection failed."
           }
 
-          if (-not (Test-Path "C:\Windows")) {
-            throw "Windows directory not found."
+          Start-Sleep -Seconds 10
+
+          $tsIP = (& $ts ip -4 | Select-Object -First 1).Trim()
+
+          if (!$tsIP) {
+            throw "No Tailscale IP received."
           }
 
-          Write-Host "Windows verification: PASSED"
-          Write-Host "PowerShell verification: PASSED"
+          "TAILSCALE_IP=$tsIP" |
+            Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+          Write-Host "Tailscale IP: $tsIP"
+
+      - name: Keep Windows Running
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $start = Get-Date
+
           Write-Host ""
-          Write-Host "All workflow checks completed."
-          Write-Host "This does NOT mean a permanent remote PC is running."
+          Write-Host "================================"
+          Write-Host "       BENJA CLOUD PC"
+          Write-Host "================================"
+          Write-Host "STATUS: RUNNING"
+          Write-Host "USER: Benja"
+          Write-Host "IP: $env:TAILSCALE_IP"
+          Write-Host "PORT: 3389"
+          Write-Host "PASSWORD: Configured"
+          Write-Host "================================"
+
+          while (((Get-Date) - $start).TotalMinutes -lt 340) {
+
+            $cpu = Get-CimInstance Win32_Processor
+            $os = Get-CimInstance Win32_OperatingSystem
+            $disk = Get-CimInstance Win32_LogicalDisk `
+              -Filter "DeviceID='C:'"
+
+            $usedRAM = [math]::Round(
+              ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 2
+            )
+
+            $totalRAM = [math]::Round(
+              $os.TotalVisibleMemorySize / 1MB, 2
+            )
+
+            Write-Host ""
+            Write-Host "========== LIVE STATUS =========="
+            Write-Host "STATUS: RUNNING"
+            Write-Host "TIME: $(Get-Date -Format 'HH:mm:ss')"
+            Write-Host "IP: $env:TAILSCALE_IP"
+            Write-Host "USER: Benja"
+            Write-Host "CPU LOAD: $($cpu.LoadPercentage)%"
+            Write-Host "RAM: $usedRAM / $totalRAM GB"
+            Write-Host "DISK FREE: $([math]::Round($disk.FreeSpace / 1GB, 2)) GB"
+            Write-Host "================================="
+
+            Start-Sleep -Seconds 60
+          }
+
+          Write-Host "Runner time limit reached."
           
