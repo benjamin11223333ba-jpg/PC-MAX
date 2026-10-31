@@ -57,7 +57,8 @@ jobs:
             -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
             -Name SecurityLayer -Value 1
 
-          Get-NetFirewallRule -DisplayName "Benja RDP Tailscale" `
+          Get-NetFirewallRule `
+            -DisplayName "Benja RDP Tailscale" `
             -ErrorAction SilentlyContinue |
             Remove-NetFirewallRule
 
@@ -73,26 +74,30 @@ jobs:
           Set-Service -Name TermService -StartupType Automatic
           Start-Service -Name TermService
 
-          Write-Host "RDP configured with NLA."
+          Write-Host "Remote Desktop configured."
 
       - name: Create Benja Account
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          $password = "Benja@1234"
-          $secure = ConvertTo-SecureString $password -AsPlainText -Force
+          $username = "Benja"
+          $password = "Nuvem@Cloud2026"
 
-          $user = Get-LocalUser -Name "Benja" `
+          $secure = ConvertTo-SecureString `
+            $password -AsPlainText -Force
+
+          $user = Get-LocalUser `
+            -Name $username `
             -ErrorAction SilentlyContinue
 
           if ($user) {
-            Set-LocalUser -Name "Benja" -Password $secure
-            Enable-LocalUser -Name "Benja"
+            Set-LocalUser -Name $username -Password $secure
+            Enable-LocalUser -Name $username
           }
           else {
             New-LocalUser `
-              -Name "Benja" `
+              -Name $username `
               -Password $secure `
               -PasswordNeverExpires `
               -AccountNeverExpires
@@ -101,35 +106,47 @@ jobs:
           $rdpGroup = Get-LocalGroup -SID "S-1-5-32-555"
 
           Add-LocalGroupMember `
-            -Group $rdpGroup `
-            -Member "Benja" `
+            -Group $rdpGroup.Name `
+            -Member $username `
             -ErrorAction SilentlyContinue
 
-          Write-Host "Windows account Benja created."
+          Write-Host "User Benja configured successfully."
 
       - name: Optimize Windows
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
 
-          Write-Host "Applying safe performance settings..."
+          Write-Host "Applying performance settings..."
 
-          # High performance power plan
+          # Solicitar plano de alto desempenho
           powercfg /setactive SCHEME_MIN
 
-          # Show system processor information
-          Get-CimInstance Win32_Processor |
-            Select-Object Name, NumberOfCores,
-              NumberOfLogicalProcessors, LoadPercentage
+          # Informacoes do processador
+          $cpu = Get-CimInstance Win32_Processor
 
-          # Show memory information
-          Get-CimInstance Win32_OperatingSystem |
-            Select-Object TotalVisibleMemorySize,
-              FreePhysicalMemory
+          Write-Host "CPU: $($cpu.Name)"
+          Write-Host "CORES: $($cpu.NumberOfCores)"
+          Write-Host "THREADS: $($cpu.NumberOfLogicalProcessors)"
 
-          # Show storage information
+          # Informacoes da memoria
+          $os = Get-CimInstance Win32_OperatingSystem
+
+          $usedRAM = [math]::Round(
+            ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 2
+          )
+
+          $totalRAM = [math]::Round(
+            $os.TotalVisibleMemorySize / 1MB, 2
+          )
+
+          Write-Host "RAM: $usedRAM / $totalRAM GB"
+
+          # Informacoes dos discos
           Get-CimInstance Win32_LogicalDisk |
-            Select-Object DeviceID, Size, FreeSpace
+            Select-Object DeviceID,
+              @{N="TotalGB";E={[math]::Round($_.Size / 1GB, 2)}},
+              @{N="FreeGB";E={[math]::Round($_.FreeSpace / 1GB, 2)}}
 
           Write-Host "Performance checks completed."
 
@@ -154,7 +171,9 @@ jobs:
             throw "Tailscale installation failed."
           }
 
-          if (!(Test-Path "C:\Program Files\Tailscale\tailscale.exe")) {
+          $ts = "C:\Program Files\Tailscale\tailscale.exe"
+
+          if (!(Test-Path $ts)) {
             throw "Tailscale executable not found."
           }
 
@@ -187,26 +206,34 @@ jobs:
           "TAILSCALE_IP=$tsIP" |
             Out-File $env:GITHUB_ENV -Append -Encoding utf8
 
-          Write-Host "Tailscale connected: $tsIP"
+          Write-Host "Tailscale IP obtained successfully."
 
       - name: Verify Remote Desktop
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          Start-Sleep -Seconds 5
+          $ready = $false
 
-          $listener = Get-NetTCPConnection `
-            -LocalPort 3389 `
-            -State Listen `
-            -ErrorAction SilentlyContinue
+          for ($i = 0; $i -lt 30; $i++) {
+            $listener = Get-NetTCPConnection `
+              -LocalPort 3389 `
+              -State Listen `
+              -ErrorAction SilentlyContinue
 
-          if (!$listener) {
-            throw "RDP is not listening on port 3389."
+            if ($listener) {
+              $ready = $true
+              break
+            }
+
+            Start-Sleep -Seconds 2
+          }
+
+          if (!$ready) {
+            throw "RDP listener not detected on port 3389."
           }
 
           Write-Host "RDP listener verified."
-          Write-Host "Port: 3389"
 
       - name: Benja Cloud PC - Live
         shell: pwsh
@@ -215,7 +242,9 @@ jobs:
 
           $start = Get-Date
           $duration = 340
-          $password = "Benja@1234"
+
+          $username = "Benja"
+          $password = "Nuvem@Cloud2026"
 
           Write-Host ""
           Write-Host "======================================"
@@ -224,7 +253,7 @@ jobs:
           Write-Host "STATUS: RUNNING"
           Write-Host "IP: $env:TAILSCALE_IP"
           Write-Host "PORT: 3389"
-          Write-Host "NAME: Benja"
+          Write-Host "NAME: $username"
           Write-Host "PASSWORD: $password"
           Write-Host "======================================"
 
@@ -232,6 +261,7 @@ jobs:
 
             $cpu = Get-CimInstance Win32_Processor
             $os = Get-CimInstance Win32_OperatingSystem
+
             $disk = Get-CimInstance Win32_LogicalDisk `
               -Filter "DeviceID='C:'"
 
@@ -243,16 +273,21 @@ jobs:
               $os.TotalVisibleMemorySize / 1MB, 2
             )
 
+            $elapsed = [math]::Round(
+              ((Get-Date) - $start).TotalMinutes
+            )
+
             Write-Host ""
             Write-Host "========== LIVE MONITOR =========="
             Write-Host "STATUS: RUNNING"
             Write-Host "IP: $env:TAILSCALE_IP"
-            Write-Host "NAME: Benja"
+            Write-Host "PORT: 3389"
+            Write-Host "NAME: $username"
             Write-Host "PASSWORD: $password"
-            Write-Host "CPU: $($cpu.LoadPercentage)%"
+            Write-Host "CPU LOAD: $($cpu.LoadPercentage)%"
             Write-Host "RAM: $usedRAM / $totalRAM GB"
             Write-Host "DISK FREE: $([math]::Round($disk.FreeSpace / 1GB, 2)) GB"
-            Write-Host "UPTIME: $([math]::Round(((Get-Date) - $start).TotalMinutes)) minutes"
+            Write-Host "UPTIME: $elapsed minutes"
             Write-Host "=================================="
 
             Start-Sleep -Seconds 60
