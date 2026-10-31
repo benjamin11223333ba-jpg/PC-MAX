@@ -1,0 +1,122 @@
+
+name: Benja Cloud PC - Maximum Performance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-pc:
+    name: Windows Performance Environment
+    runs-on: windows-2025
+    timeout-minutes: 350
+
+    steps:
+      - name: Initialize Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "===================================="
+          Write-Host "       BENJA CLOUD PC"
+          Write-Host "       MAXIMUM PERFORMANCE"
+          Write-Host "===================================="
+
+          Write-Host ""
+          Write-Host "Windows environment initialized."
+
+      - name: System Information
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $os = Get-CimInstance Win32_OperatingSystem
+          $cpu = Get-CimInstance Win32_Processor
+          $computer = Get-CimInstance Win32_ComputerSystem
+          $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+
+          Write-Host "WINDOWS: $($os.Caption)"
+          Write-Host "VERSION: $($os.Version)"
+          Write-Host "CPU: $($cpu.Name)"
+          Write-Host "CORES: $($cpu.NumberOfCores)"
+          Write-Host "THREADS: $($cpu.NumberOfLogicalProcessors)"
+          Write-Host "RAM TOTAL: $([math]::Round($computer.TotalPhysicalMemory / 1GB, 2)) GB"
+          Write-Host "DISK TOTAL: $([math]::Round($disk.Size / 1GB, 2)) GB"
+          Write-Host "DISK FREE: $([math]::Round($disk.FreeSpace / 1GB, 2)) GB"
+
+      - name: Optimize Windows Environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+
+          Write-Host "Applying safe process optimizations..."
+
+          # Reduzir prioridade de processos em segundo plano
+          Get-Process |
+            Where-Object {
+              $_.ProcessName -in @(
+                "OneDrive",
+                "Teams",
+                "PhoneExperienceHost"
+              )
+            } |
+            ForEach-Object {
+              try {
+                $_.PriorityClass = "BelowNormal"
+                Write-Host "Adjusted: $($_.ProcessName)"
+              }
+              catch {
+                Write-Host "Skipped: $($_.ProcessName)"
+              }
+            }
+
+          # Informações de energia
+          powercfg /getactivescheme
+
+          Write-Host "Optimization step completed."
+
+      - name: Performance Monitoring
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $cpu = Get-CimInstance Win32_Processor
+          $os = Get-CimInstance Win32_OperatingSystem
+
+          $usedRAM = [math]::Round(
+            ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB,
+            2
+          )
+
+          $totalRAM = [math]::Round(
+            $os.TotalVisibleMemorySize / 1MB,
+            2
+          )
+
+          Write-Host "========== PERFORMANCE =========="
+          Write-Host "CPU: $($cpu.LoadPercentage)%"
+          Write-Host "RAM USED: $usedRAM GB"
+          Write-Host "RAM TOTAL: $totalRAM GB"
+          Write-Host "================================="
+
+      - name: Final System Verification
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if (-not (Get-Command powershell.exe -ErrorAction SilentlyContinue)) {
+            throw "PowerShell verification failed."
+          }
+
+          if (-not (Test-Path "C:\Windows")) {
+            throw "Windows directory not found."
+          }
+
+          Write-Host "Windows verification: PASSED"
+          Write-Host "PowerShell verification: PASSED"
+          Write-Host ""
+          Write-Host "All workflow checks completed."
+          Write-Host "This does NOT mean a permanent remote PC is running."
+          
